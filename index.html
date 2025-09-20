@@ -7,209 +7,193 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            width: 720px;
-            height: 1280px;
-            overflow: hidden;
-            position: fixed;
-            font-family: Arial, sans-serif;
-        }
-
-        .screen {
-            display: none;
-            width: 100%;
-            height: 100%;
-            position: relative;
-        }
-
-        .screen.active {
-            display: block;
-        }
-
-        .background {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .terminal-number {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            color: white;
-            font-size: 16px;
-            background: rgba(0,0,0,0.5);
-            padding: 5px 10px;
-            border-radius: 5px;
-            z-index: 100;
-        }
-
-        .payment-amount {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-size: 36px;
-            font-weight: bold;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
-            background: rgba(0,0,0,0.5);
-            padding: 10px 20px;
-            border-radius: 10px;
-        }
-
-        .facepay-button {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            width: 60px;
-            height: 60px;
-            cursor: pointer;
-            z-index: 100;
-        }
-
-        .facepay-button img {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { width: 720px; height: 1280px; overflow: hidden; position: fixed; font-family: Arial, sans-serif; }
+        .screen { display: none; width: 100%; height: 100%; position: relative; }
+        .screen.active { display: block; }
+        .background { width: 100%; height: 100%; object-fit: cover; }
+        .terminal-number { position: absolute; bottom: 20px; left: 20px; color: white; font-size: 16px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 5px; z-index: 100; }
+        .payment-amount { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 36px; font-weight: bold; text-shadow: 2px 2px 4px rgba(0,0,0,0.7); background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 10px; }
+        .facepay-button { position: absolute; bottom: 20px; left: 20px; width: 60px; height: 60px; cursor: pointer; z-index: 100; }
+        .facepay-button img { width: 100%; height: 100%; object-fit: contain; }
+        .exit-button { position: absolute; top: 20px; right: 20px; color: white; background: rgba(255,0,0,0.7); padding: 10px 15px; border-radius: 5px; cursor: pointer; z-index: 1000; }
     </style>
 </head>
 <body>
-    <!-- Экран ожидания -->
     <div id="idle-screen" class="screen active">
         <img src="resources/idle.jpg" alt="Idle Screen" class="background">
         <div class="terminal-number">Номер терминала: <span id="terminal-num">1</span></div>
+        <div class="exit-button" onclick="appTerminal.exitApp()">Выход</div>
     </div>
 
-    <!-- Экран оплаты -->
     <div id="paying-screen" class="screen">
         <img src="resources/paying.jpg" alt="Paying Screen" class="background">
         <div class="payment-amount" id="payment-amount"></div>
-        <div class="facepay-button" onclick="handleFacePay()">
+        <div class="facepay-button" onclick="appTerminal.handleFacePay()">
             <img src="resources/facepay.jpg" alt="Face Pay">
         </div>
+        <div class="exit-button" onclick="appTerminal.exitApp()">Выход</div>
     </div>
 
     <script>
-        // Firebase configuration
-        const firebaseConfig = {
-            databaseURL: "https://vtb-term-default-rtdb.europe-west1.firebasedatabase.app/"
-        };
+        // Глобальный объект приложения
+        window.appTerminal = {
+            terminalNumber: 1,
+            currentState: "TERM_IS_IDLE",
+            currentPaymentAmount: "Null",
+            firebaseInitialized: false,
 
-        // Initialize Firebase
-        firebase.initializeApp(firebaseConfig);
-        const database = firebase.database();
+            init: function() {
+                this.getTerminalNumber();
+                this.initFirebase();
+                this.setupEventListeners();
+                
+                // Обработка закрытия страницы
+                window.addEventListener('beforeunload', this.cleanup.bind(this));
+                window.addEventListener('unload', this.cleanup.bind(this));
+            },
 
-        let terminalNumber = 1;
-        let currentState = "TERM_IS_IDLE";
-        let currentPaymentAmount = "Null";
+            getTerminalNumber: function() {
+                if (typeof Android !== 'undefined' && Android.getTerminalNumber) {
+                    this.terminalNumber = Android.getTerminalNumber();
+                } else {
+                    this.terminalNumber = Math.floor(Math.random() * 100) + 1;
+                }
+                document.getElementById('terminal-num').textContent = this.terminalNumber;
+            },
 
-        // Initialize the app
-        document.addEventListener('DOMContentLoaded', function() {
-            // Get terminal number from Android or generate
-            if (typeof Android !== 'undefined' && Android.getTerminalNumber) {
-                terminalNumber = Android.getTerminalNumber();
-            } else {
-                terminalNumber = Math.floor(Math.random() * 100) + 1;
-            }
-            
-            document.getElementById('terminal-num').textContent = terminalNumber;
-            
-            // Write initial state to Firebase
-            writeToFirebase("TERM_IS_IDLE", "Null");
-            
-            // Start listening for changes
-            setupFirebaseListener();
-        });
+            initFirebase: function() {
+                try {
+                    const firebaseConfig = {
+                        databaseURL: "https://vtb-term-default-rtdb.europe-west1.firebasedatabase.app/"
+                    };
+                    firebase.initializeApp(firebaseConfig);
+                    this.firebaseInitialized = true;
+                    this.writeToFirebase("TERM_IS_IDLE", "Null");
+                    this.setupFirebaseListener();
+                } catch (error) {
+                    console.error('Firebase init error:', error);
+                }
+            },
 
-        function writeToFirebase(state, paying) {
-            const terminalRef = database.ref('termnumbers/user' + terminalNumber);
-            
-            terminalRef.set({
-                State: state,
-                Paying: paying,
-                linked: 'false'
-            }).then(() => {
-                console.log('Data written to Firebase');
-            }).catch((error) => {
-                console.error('Error writing to Firebase:', error);
-            });
-        }
+            writeToFirebase: function(state, paying) {
+                if (!this.firebaseInitialized) return;
+                
+                const terminalRef = firebase.database().ref('termnumbers/user' + this.terminalNumber);
+                terminalRef.set({
+                    State: state,
+                    Paying: paying,
+                    linked: 'false'
+                }).catch(error => {
+                    console.error('Firebase write error:', error);
+                });
+            },
 
-        function setupFirebaseListener() {
-            const terminalRef = database.ref('termnumbers/user' + terminalNumber);
-            
-            terminalRef.on('value', (snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    const newState = data.State || "TERM_IS_IDLE";
-                    const newPaying = data.Paying || "Null";
-                    
-                    if (newState === "TERM_IS_PAYING" && newPaying !== "Null") {
-                        switchToPayingScreen(newPaying);
-                    } else if (newState === "TERM_IS_IDLE") {
-                        switchToIdleScreen();
+            setupFirebaseListener: function() {
+                if (!this.firebaseInitialized) return;
+                
+                const terminalRef = firebase.database().ref('termnumbers/user' + this.terminalNumber);
+                terminalRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        const newState = data.State || "TERM_IS_IDLE";
+                        const newPaying = data.Paying || "Null";
+                        
+                        if (newState === "TERM_IS_PAYING" && newPaying !== "Null") {
+                            this.switchToPayingScreen(newPaying);
+                        } else if (newState === "TERM_IS_IDLE") {
+                            this.switchToIdleScreen();
+                        }
+                    }
+                });
+            },
+
+            switchToPayingScreen: function(amount) {
+                document.getElementById('idle-screen').classList.remove('active');
+                document.getElementById('paying-screen').classList.add('active');
+                
+                const formattedAmount = parseInt(amount).toLocaleString('ru-RU') + ' руб.';
+                document.getElementById('payment-amount').textContent = formattedAmount;
+                
+                this.currentState = "TERM_IS_PAYING";
+                this.currentPaymentAmount = amount;
+            },
+
+            switchToIdleScreen: function() {
+                document.getElementById('paying-screen').classList.remove('active');
+                document.getElementById('idle-screen').classList.add('active');
+                
+                this.currentState = "TERM_IS_IDLE";
+                this.currentPaymentAmount = "Null";
+            },
+
+            handleFacePay: function() {
+                if (this.currentState === "TERM_IS_PAYING") {
+                    alert('Оплата FacePay: ' + this.currentPaymentAmount + ' руб.');
+                    this.writeToFirebase("TERM_IS_IDLE", "Null");
+                }
+            },
+
+            setupEventListeners: function() {
+                let pressCount = 0;
+                document.getElementById('idle-screen').addEventListener('click', (e) => {
+                    if (e.target.classList.contains('background')) {
+                        pressCount++;
+                        if (pressCount >= 5) {
+                            const testAmount = Math.floor(Math.random() * 10000) + 100;
+                            this.writeToFirebase("TERM_IS_PAYING", testAmount.toString());
+                            pressCount = 0;
+                        }
+                    }
+                });
+            },
+
+            exitApp: function() {
+                if (confirm('Закрыть приложение?')) {
+                    this.cleanup();
+                    if (typeof Android !== 'undefined' && Android.onAppClosed) {
+                        Android.onAppClosed();
+                    } else {
+                        window.close();
                     }
                 }
-            });
-        }
+            },
 
-        function switchToPayingScreen(amount) {
-            document.getElementById('idle-screen').classList.remove('active');
-            document.getElementById('paying-screen').classList.add('active');
-            
-            const formattedAmount = parseInt(amount).toLocaleString('ru-RU') + ' руб.';
-            document.getElementById('payment-amount').textContent = formattedAmount;
-            
-            currentState = "TERM_IS_PAYING";
-            currentPaymentAmount = amount;
-        }
+            cleanup: function() {
+                this.writeToFirebase("TERM_IS_OFFLINE", "Null");
+            },
 
-        function switchToIdleScreen() {
-            document.getElementById('paying-screen').classList.remove('active');
-            document.getElementById('idle-screen').classList.add('active');
-            
-            currentState = "TERM_IS_IDLE";
-            currentPaymentAmount = "Null";
-        }
+            // Методы для Android
+            onAppPause: function() {
+                this.writeToFirebase("TERM_IS_OFFLINE", "Null");
+            },
 
-        function handleFacePay() {
-            if (currentState === "TERM_IS_PAYING") {
-                alert('Оплата FacePay: ' + currentPaymentAmount + ' руб.');
-                // Здесь можно добавить логику обработки оплаты
-                
-                // После оплаты возвращаем в idle режим
-                writeToFirebase("TERM_IS_IDLE", "Null");
-            }
-        }
+            onAppResume: function() {
+                this.writeToFirebase("TERM_IS_IDLE", "Null");
+            },
 
-        // Обработка нажатий для перехода (как в Python версии)
-        let pressCount = 0;
-        document.getElementById('idle-screen').addEventListener('click', function(e) {
-            if (e.target.classList.contains('background')) {
-                pressCount++;
-                
-                if (pressCount >= 5) {
-                    // Имитация перехода в режим оплаты для тестирования
-                    const testAmount = Math.floor(Math.random() * 10000) + 100;
-                    writeToFirebase("TERM_IS_PAYING", testAmount.toString());
-                    pressCount = 0;
+            onAppDestroy: function() {
+                this.cleanup();
+            },
+
+            onBackPressed: function() {
+                if (this.currentState === "TERM_IS_PAYING") {
+                    this.writeToFirebase("TERM_IS_IDLE", "Null");
+                    return true;
                 }
+                return false;
             }
+        };
+
+        // Инициализация при загрузке
+        document.addEventListener('DOMContentLoaded', function() {
+            appTerminal.init();
         });
 
-        // Clean up on page unload
-        window.addEventListener('beforeunload', function() {
-            writeToFirebase("TERM_IS_OFFLINE", "Null");
+        // Обработка закрытия окна
+        window.addEventListener('beforeunload', function(e) {
+            appTerminal.cleanup();
         });
     </script>
 </body>
 </html>
-
